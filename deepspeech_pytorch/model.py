@@ -211,6 +211,7 @@ class DeepSpeech(pl.LightningModule):
             target_decoder=self.evaluation_decoder
         )
 
+
     def forward(self, x, lengths, hs=None):
         lengths = lengths.cpu().int()
         output_lengths = self.get_seq_lens(lengths)

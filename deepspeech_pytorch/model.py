@@ -13,7 +13,7 @@ from deepspeech_pytorch.configs.train_config import SpectConfig, BiDirectionalCo
     SGDConfig, UniDirectionalConfig
 from deepspeech_pytorch.decoder import GreedyDecoder
 from deepspeech_pytorch.validation import CharErrorRate, WordErrorRate
-
+from .customlstm import CustomLSTM
 
 class SequenceWise(nn.Module):
     def __init__(self, module):
@@ -84,8 +84,8 @@ class BatchRNN(nn.Module):
         self.hidden_size = hidden_size
         self.bidirectional = bidirectional
         self.batch_norm = SequenceWise(nn.BatchNorm1d(input_size)) if batch_norm else None
-        self.rnn = rnn_type(input_size=input_size, hidden_size=hidden_size,
-                            bidirectional=bidirectional, bias=True)
+        #self.rnn = rnn_type(input_size=input_size, hidden_size=hidden_size, bidirectional=bidirectional, bias=True)
+        self.rnn = CustomLSTM(input_sz=input_size, hidden_sz=hidden_size)
         self.num_directions = 2 if bidirectional else 1
 
     def flatten_parameters(self):
@@ -94,11 +94,11 @@ class BatchRNN(nn.Module):
     def forward(self, x, output_lengths, h=None):
         if self.batch_norm is not None:
             x = self.batch_norm(x)
-        x = nn.utils.rnn.pack_padded_sequence(x, output_lengths)
+        #x = nn.utils.rnn.pack_padded_sequence(x, output_lengths)
         x, h = self.rnn(x, h)
-        x, _ = nn.utils.rnn.pad_packed_sequence(x)
-        if self.bidirectional:
-            x = x.view(x.size(0), x.size(1), 2, -1).sum(2).view(x.size(0), x.size(1), -1)  # (TxNxH*2) -> (TxNxH) by sum
+        #x, _ = nn.utils.rnn.pad_packed_sequence(x)
+        #if self.bidirectional:
+        #    x = x.view(x.size(0), x.size(1), 2, -1).sum(2).view(x.size(0), x.size(1), -1)  # (TxNxH*2) -> (TxNxH) by sum
         return x, h
 
 
@@ -211,7 +211,12 @@ class DeepSpeech(pl.LightningModule):
             target_decoder=self.evaluation_decoder
         )
 
-
+    def lr_scheduler_step(self, scheduler, optimizer_idx, metric):
+        if metric is None:
+            scheduler.step()
+        else:
+            scheduler.step(metric)
+    
     def forward(self, x, lengths, hs=None):
         lengths = lengths.cpu().int()
         output_lengths = self.get_seq_lens(lengths)
@@ -219,7 +224,7 @@ class DeepSpeech(pl.LightningModule):
 
         sizes = x.size()
         x = x.view(sizes[0], sizes[1] * sizes[2], sizes[3])  # Collapse feature dimension
-        x = x.transpose(1, 2).transpose(0, 1).contiguous()  # TxNxH
+        x = x.transpose(1, 2).transpose(0, 1).contiguous()  # NxHxT -> TxNxH
 
         # if hs is None, create a list of None values corresponding to the number of rnn layers
         if hs is None:
@@ -227,6 +232,8 @@ class DeepSpeech(pl.LightningModule):
 
         new_hs = []
         for i, rnn in enumerate(self.rnns):
+            #print("%dth layer RNN xsize"%i)
+            #print(x.size())
             x, h = rnn(x, output_lengths, hs[i])
             new_hs.append(h)
 
